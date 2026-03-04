@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NovaCast</title>
+<link rel="stylesheet" href="/css/style.css">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,400&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- ══ LOBBY ══ -->
+<div id="lobby">
+  <div class="bg-orb orb1"></div>
+  <div class="bg-orb orb2"></div>
+  <div class="lobby-card">
+    <div class="logo">Nova<span>Cast</span></div>
+    <p class="tagline">Share màn hình · Video call · Chat — Không cần tài khoản</p>
+
+    <div class="form-group">
+      <label>Biệt danh</label>
+      <input id="nicknameInput" placeholder="Tên hiển thị của bạn..." maxlength="24" autocomplete="off"/>
+    </div>
+
+    <div class="form-group">
+      <label>Avatar</label>
+      <div class="avatar-picker" id="avatarPicker"></div>
+    </div>
+
+    <button class="btn btn-primary" id="btnCreate">🚀 Tạo phòng mới</button>
+    <div class="or-divider"><span>hoặc</span></div>
+    <div class="form-group">
+      <label>Room ID</label>
+      <div class="join-row">
+        <input id="joinInput" placeholder="Nhập Room ID để tham gia..." maxlength="8" autocomplete="off" style="text-transform:uppercase"/>
+        <button class="btn btn-outline" id="btnJoin">Vào phòng</button>
+      </div>
+    </div>
+    <div id="lobbyError" class="lobby-error"></div>
+  </div>
+</div>
+
+<!-- ══ ROOM ══ -->
+<div id="room" class="hidden">
+  <!-- Header -->
+  <header class="room-header">
+    <div class="logo-sm">Nova<span>Cast</span></div>
+    <div class="room-id-badge" id="roomIdBadge"></div>
+    <span class="quality-tag">1080p · 60fps</span>
+    <div class="hflex"></div>
+    <div class="peer-pill">👥 <b id="peerCount">1</b></div>
+    <button class="btn-invite" id="btnInvite">🔗 Mời bạn bè</button>
+  </header>
+
+  <!-- Body -->
+  <div class="room-body">
+
+    <!-- Video + Controls -->
+    <div class="video-col">
+      <div class="video-grid" id="videoGrid">
+        <div class="empty-video" id="emptyVideo">
+          <div class="ev-icon">🎥</div>
+          <div class="ev-title">Chưa có video</div>
+          <div class="ev-sub">Bật camera hoặc chia sẻ màn hình để bắt đầu</div>
+        </div>
+      </div>
+      <div class="controls-bar">
+        <button class="ctrl" id="ctrlMic" data-tip="Bật mic" onclick="App.toggleMic()">🔇</button>
+        <button class="ctrl" id="ctrlCam" data-tip="Bật camera" onclick="App.toggleCamera()">📷</button>
+        <button class="ctrl" id="ctrlScreen" data-tip="Chia sẻ màn hình" onclick="App.toggleScreen()">🖥️</button>
+        <div class="ctrl-sep"></div>
+        <button class="ctrl ctrl-danger" data-tip="Rời phòng" onclick="App.leave()">📵</button>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="tab-bar">
+        <button class="tab active" id="tabChat" onclick="App.switchTab('chat')">💬 Chat</button>
+        <button class="tab" id="tabPeople" onclick="App.switchTab('people')">👥 Người dùng</button>
+      </div>
+
+      <!-- Chat panel -->
+      <div id="panelChat" class="panel">
+        <div class="messages" id="messages"></div>
+        <div class="chat-footer">
+          <input id="chatInput" placeholder="Nhập tin nhắn... (Enter)" autocomplete="off"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();App.sendChat();}"/>
+          <button class="send-btn" onclick="App.sendChat()">➤</button>
+        </div>
+      </div>
+
+      <!-- People panel -->
+      <div id="panelPeople" class="panel hidden">
+        <div class="people-list" id="peopleList"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- ══ INVITE MODAL ══ -->
+<div class="modal-bg hidden" id="modalBg" onclick="App.closeModal(event)">
+  <div class="modal">
+    <div class="modal-title">🔗 Mời bạn bè</div>
+    <p class="modal-sub">Gửi link này — không cần tài khoản, chỉ cần click và nhập tên!</p>
+    <div class="link-row">
+      <span id="inviteLinkText"></span>
+      <button class="copy-btn" onclick="App.copyLink()">Sao chép</button>
+    </div>
+    <button class="modal-close-btn" onclick="App.closeModal()">Đóng</button>
+  </div>
+</div>
+
+<!-- ══ TOAST ══ -->
+<div id="toasts"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/webrtc.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
