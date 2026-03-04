@@ -103,7 +103,20 @@ io.on('connection', (socket) => {
   });
 });
 
+// Health check endpoint (used by Render)
+app.get('/health', (req, res) => res.json({ status: 'ok', rooms: Object.keys(rooms).length }));
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`\n🚀 NovaCast running at http://localhost:${PORT}\n`);
+
+  // Keep-alive: self-ping every 10 min to prevent Render free tier sleep
+  if (process.env.RENDER_EXTERNAL_URL) {
+    setInterval(() => {
+      http.get(`${process.env.RENDER_EXTERNAL_URL}/health`).on('error', () => {});
+    }, 10 * 60 * 1000);
+    console.log('Keep-alive enabled for Render free tier');
+  }
 });
+
+// Health check for Render
