@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>TURN Test</title>
+<style>
+body { font-family: monospace; background: #111; color: #eee; padding: 20px; max-width: 600px; }
+button { background: #22d3ee; color: #000; border: none; padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 8px; margin: 10px 0; }
+.ok  { color: #4ade80; }
+.err { color: #f87171; }
+.info{ color: #facc15; }
+#log { background: #000; padding: 16px; border-radius: 8px; margin-top: 16px; min-height: 100px; line-height: 1.8; }
+</style>
+</head>
+<body>
+<h2>🔧 TURN Server Test</h2>
+<p>Mở trang này tại: <code id="url"></code></p>
+<p>Tool này tự test xem server có TURN không và kết nối được không.</p>
+<button onclick="runTest()">▶ Chạy Test</button>
+<div id="log">Nhấn nút để bắt đầu...</div>
+
+<script>
+document.getElementById('url').textContent = location.href;
+
+function log(msg, type='info') {
+  const d = document.getElementById('log');
+  d.innerHTML += `<div class="${type}">› ${msg}</div>`;
+}
+
+async function runTest() {
+  document.getElementById('log').innerHTML = '';
+
+  // 1. Fetch ICE config from server
+  log('Fetching /ice-config từ server...');
+  let iceConfig;
+  try {
+    const res = await fetch('/ice-config');
+    iceConfig = await res.json();
+    log('ICE config nhận được:', 'ok');
+    iceConfig.iceServers.forEach(s => {
+      const urls = Array.isArray(s.urls) ? s.urls.join(', ') : s.urls;
+      const hasCred = s.username ? ' [có credentials]' : '';
+      log('  ' + urls + hasCred, s.username ? 'ok' : 'info');
+    });
+    const hasTurn = iceConfig.iceServers.some(s => {
+      const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+      return urls.some(u => u.startsWith('turn:') || u.startsWith('turns:'));
+    });
+    if (!hasTurn) {
+      log('⚠️ KHÔNG có TURN server! Kết nối cross-network sẽ thất bại.', 'err');
+      log('→ Cần set TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL trong Render env vars', 'err');
+    } else {
+      log('✅ Có TURN server trong config', 'ok');
+    }
+  } catch(e) {
+    log('❌ Không fetch được /ice-config: ' + e.message, 'err');
+    log('→ Đảm bảo endpoint /ice-config tồn tại trong server/index.js', 'err');
+    iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+  }
+
+  // 2. Test ICE connectivity giữa 2 PC local
+  log('');
+  log('Đang test ICE connectivity (loopback test)...');
+  try {
+    const result = await testICELoopback(iceConfig);
+    if (result === 'connected' || result === 'completed') {
+      log('✅ ICE loopback: ' + result, 'ok');
+    } else {
+      log('❌ ICE loopback failed: ' + result, 'err');
+    }
+  } catch(e) {
+    log('❌ ICE test lỗi: ' + e.message, 'err');
+  }
+
+  // 3. Check candidate types
+  log('');
+  log('Kiểm tra loại ICE candidates...');
+  try {
+    await checkCandidateTypes(iceConfig);
+  } catch(e) {
+    log('Lỗi: ' + e.message, 'err');
+  }
+}
+
+function testICELoopback(iceConfig) {
+  return new Promise((resolve, reject) => {
+    const pc1 = new RTCPeerConnection(iceConfig);
+    const pc2 = new RTCPeerConnection(iceConfig);
+    let done = false;
+
+    const finish = (result) => {
+      if (done) return; done = true;
+      pc1.close(); pc2.close();
+      resolve(result);
+    };
+
+    pc1.onicecandidate = e => { if (e.candidate) pc2.addIceCandidate(e.candidate).catch(()=>{}); };
+    pc2.onicecandidate = e => { if (e.candidate) pc1.addIceCandidate(e.candidate).catch(()=>{}); };
+    pc1.oniceconnectionstatechange = () => {
+      log('  ICE state: ' + pc1.iceConnectionState);
+      if (['connected','completed','failed','disconnected'].includes(pc1.iceConnectionState)) {
+        finish(pc1.iceConnectionState);
+      }
+    };
+
+    pc1.createDataChannel('test');
+    pc1.createOffer()
+      .then(o => pc1.setLocalDescription(o).then(() => o))
+      .then(o => pc2.setRemoteDescription(o))
+      .then(() => pc2.createAnswer())
+      .then(a => pc2.setLocalDescription(a).then(() => a))
+      .then(a => pc1.setRemoteDescription(a))
+      .catch(reject);
+
+    setTimeout(() => finish('timeout'), 15000);
+  });
+}
+
+async function checkCandidateTypes(iceConfig) {
+  const pc = new RTCPeerConnection(iceConfig);
+  const candidates = [];
+
+  pc.createDataChannel('x');
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  await new Promise(r => {
+    pc.onicecandidate = e => {
+      if (e.candidate) {
+        candidates.push(e.candidate);
+      } else {
+        r(); // gathering complete
+      }
+    };
+    setTimeout(r, 5000);
+  });
+
+  pc.close();
+
+  const types = [...new Set(candidates.map(c => c.type))];
+  log('  Candidate types thu thập được: ' + (types.join(', ') || 'none'), types.length ? 'ok' : 'err');
+
+  const hasRelay = candidates.some(c => c.type === 'relay');
+  const hasSrflx = candidates.some(c => c.type === 'srflx');
+
+  if (hasRelay) {
+    log('  ✅ Có "relay" candidate → TURN hoạt động', 'ok');
+  } else {
+    log('  ❌ Không có "relay" candidate → TURN chưa hoạt động', 'err');
+  }
+  if (hasSrflx) {
+    log('  ✅ Có "srflx" candidate → STUN hoạt động', 'ok');
+  } else {
+    log('  ⚠️ Không có "srflx" candidate → STUN cũng có vấn đề?', 'info');
+  }
+
+  if (!hasRelay) {
+    log('');
+    log('📋 Cách fix:', 'info');
+    log('1. Đăng ký TURN miễn phí tại: https://dashboard.metered.ca', 'info');
+    log('2. Lấy credentials → vào Render Dashboard → Environment', 'info');
+    log('3. Thêm 3 biến:', 'info');
+    log('   TURN_URLS=turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turns:openrelay.metered.ca:443', 'info');
+    log('   TURN_USERNAME=openrelayproject', 'info');
+    log('   TURN_CREDENTIAL=openrelayproject', 'info');
+    log('4. Redeploy → chạy lại test này', 'info');
+  }
+}
+</script>
+</body>
+</html>
