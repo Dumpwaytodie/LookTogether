@@ -441,3 +441,14 @@ input, button { font-family: inherit; }
 .toast.warn { border-color: rgba(251,191,36,.35); }
 @keyframes tIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
 @keyframes tOut { to{opacity:0;transform:translateY(-10px)} }
+
+/* ── Play overlay (khi browser block autoplay) ── */
+.play-overlay {
+  display: none;
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,.6);
+  align-items: center; justify-content: center;
+  font-size: 48px; color: #fff; cursor: pointer;
+  border-radius: 12px;
+}
+.vtile.needs-play .play-overlay { display: flex; }

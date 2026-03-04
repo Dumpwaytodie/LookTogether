@@ -1,5 +1,8 @@
 /**
- * WebRTC Manager — v7 (fixed screen share detection + signaling)
+ * WebRTC Manager — v8
+ * - RTCDataChannel để gửi metadata (streamId, isScreen) TRƯỚC khi stream đến
+ * - Force-play video sau khi srcObject set
+ * - Không dùng track.label hay socket relay
  */
 const WebRTC = (() => {
 
@@ -11,16 +14,18 @@ const WebRTC = (() => {
     ]
   };
 
-  const pcs         = {};  // peerId -> RTCPeerConnection
-  const makingOffer = {};  // peerId -> bool
+  const pcs          = {};
+  const dataChannels = {};
+  const makingOffer  = {};
 
-  // Track which streamIds are screen shares (set when we ADD tracks)
-  // Format: streamId -> true/false
-  const screenStreamIds = {};
+  // streamId -> { isScreen }
+  const streamMeta = {};
+  // streamId -> { stream, peerId } — waiting for meta
+  const pendingStreams = {};
 
   let _camStream    = null;
   let _screenStream = null;
-  let socket         = null;
+  let socket        = null;
   let onRemoteStream = null;
   let onRemoveStream = null;
 
@@ -31,54 +36,108 @@ const WebRTC = (() => {
     socket.on('offer',         ({ from, offer })     => _handleOffer(from, offer));
     socket.on('answer',        ({ from, answer })    => _handleAnswer(from, answer));
     socket.on('ice-candidate', ({ from, candidate }) => _handleICE(from, candidate));
-    // NEW: receive screen stream ID mapping from remote peer
-    socket.on('screen-stream-id', ({ from, streamId }) => {
-      if (streamId) {
-        screenStreamIds[streamId] = true;
-        console.log(`[WebRTC] Got screen-stream-id from ${from.slice(-4)}: ${streamId}`);
-      }
+  }
+
+  // ── Data Channel ──
+  function _sendMeta(peerId, payload) {
+    const tryNow = () => {
+      const dc = dataChannels[peerId];
+      return dc && dc.readyState === 'open';
+    };
+    const send = () => dataChannels[peerId].send(JSON.stringify(payload));
+
+    if (tryNow()) { send(); return; }
+
+    let attempts = 0;
+    const iv = setInterval(() => {
+      attempts++;
+      if (tryNow()) { send(); clearInterval(iv); }
+      if (attempts > 50) clearInterval(iv); // give up after 5s
+    }, 100);
+  }
+
+  function _setupDataChannel(peerId, dc) {
+    dataChannels[peerId] = dc;
+    dc.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'stream-meta') {
+          console.log(`[DC] got meta streamId=${msg.streamId.slice(-6)} isScreen=${msg.isScreen}`);
+          streamMeta[msg.streamId] = { isScreen: msg.isScreen };
+
+          if (pendingStreams[msg.streamId]) {
+            const { stream, peerId: pid } = pendingStreams[msg.streamId];
+            delete pendingStreams[msg.streamId];
+            onRemoteStream(pid, stream, msg.isScreen);
+          }
+        }
+      } catch(err) {}
+    };
+  }
+
+  function _broadcastStreamMeta() {
+    Object.keys(pcs).forEach(peerId => {
+      if (_camStream)
+        _sendMeta(peerId, { type: 'stream-meta', streamId: _camStream.id, isScreen: false });
+      if (_screenStream)
+        _sendMeta(peerId, { type: 'stream-meta', streamId: _screenStream.id, isScreen: true });
     });
   }
 
-  function _getOrCreatePC(peerId) {
+  // ── PC Creation ──
+  function _getOrCreatePC(peerId, initiator) {
     if (pcs[peerId]) return pcs[peerId];
 
     const pc = new RTCPeerConnection(ICE);
     pcs[peerId] = pc;
     makingOffer[peerId] = false;
 
+    if (initiator) {
+      const dc = pc.createDataChannel('meta', { ordered: true });
+      _setupDataChannel(peerId, dc);
+    } else {
+      pc.ondatachannel = (e) => _setupDataChannel(peerId, e.channel);
+    }
+
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) socket.emit('ice-candidate', { to: peerId, candidate });
     };
 
-    const reportedStreams = new Set();
-
     pc.ontrack = (e) => {
       const stream = e.streams && e.streams[0];
       if (!stream) return;
+      console.log(`[PC:${peerId.slice(-4)}] ontrack kind=${e.track.kind} stream=${stream.id.slice(-6)}`);
 
-      // Wait a tick so screenStreamIds has time to be populated
-      setTimeout(() => {
-        if (!reportedStreams.has(stream.id)) {
-          reportedStreams.add(stream.id);
-          // Check if this streamId was flagged as a screen share by remote
-          const isScreen = !!screenStreamIds[stream.id];
-          console.log(`[WebRTC] ontrack stream=${stream.id.slice(-6)} isScreen=${isScreen}`);
-          onRemoteStream(peerId, stream, isScreen);
-        }
+      const report = (isScreen) => {
+        onRemoteStream(peerId, stream, isScreen);
+      };
 
-        e.track.onended = () => {
-          setTimeout(() => {
-            const live = stream.getTracks().filter(t => t.readyState === 'live').length;
-            if (live === 0) {
-              const wasScreen = !!screenStreamIds[stream.id];
-              delete screenStreamIds[stream.id];
-              reportedStreams.delete(stream.id);
-              onRemoveStream(peerId, wasScreen, stream.id);
-            }
-          }, 300);
-        };
-      }, 100);
+      const meta = streamMeta[stream.id];
+      if (meta !== undefined) {
+        report(meta.isScreen);
+      } else {
+        pendingStreams[stream.id] = { stream, peerId };
+        // Fallback after 3s
+        setTimeout(() => {
+          if (pendingStreams[stream.id]) {
+            console.warn(`[PC] Meta timeout for ${stream.id.slice(-6)}, guessing isScreen=false`);
+            delete pendingStreams[stream.id];
+            streamMeta[stream.id] = { isScreen: false };
+            report(false);
+          }
+        }, 3000);
+      }
+
+      e.track.onended = () => {
+        setTimeout(() => {
+          if (stream.getTracks().every(t => t.readyState === 'ended')) {
+            const wasScreen = streamMeta[stream.id]?.isScreen ?? false;
+            delete streamMeta[stream.id];
+            delete pendingStreams[stream.id];
+            onRemoveStream(peerId, wasScreen, stream.id);
+          }
+        }, 300);
+      };
     };
 
     pc.onnegotiationneeded = async () => {
@@ -86,9 +145,8 @@ const WebRTC = (() => {
         makingOffer[peerId] = true;
         await pc.setLocalDescription();
         socket.emit('offer', { to: peerId, offer: pc.localDescription });
-        console.log(`[WebRTC] onnegotiationneeded → offer sent to ${peerId.slice(-4)}`);
-      } catch(e) {
-        console.error('onnegotiationneeded error:', e);
+      } catch(err) {
+        console.error('onnegotiationneeded:', err);
       } finally {
         makingOffer[peerId] = false;
       }
@@ -101,8 +159,7 @@ const WebRTC = (() => {
       if (s === 'closed') {
         onRemoveStream(peerId, false, null);
         onRemoveStream(peerId, true, null);
-        delete pcs[peerId];
-        delete makingOffer[peerId];
+        delete pcs[peerId]; delete makingOffer[peerId]; delete dataChannels[peerId];
       }
     };
 
@@ -112,46 +169,39 @@ const WebRTC = (() => {
   function _addAllTracks(pc) {
     if (_camStream) {
       _camStream.getTracks().forEach(t => {
-        if (!pc.getSenders().some(s => s.track === t))
-          pc.addTrack(t, _camStream);
+        if (!pc.getSenders().some(s => s.track === t)) pc.addTrack(t, _camStream);
       });
     }
     if (_screenStream) {
       _screenStream.getTracks().forEach(t => {
-        if (!pc.getSenders().some(s => s.track === t))
-          pc.addTrack(t, _screenStream);
+        if (!pc.getSenders().some(s => s.track === t)) pc.addTrack(t, _screenStream);
       });
     }
   }
 
-  // Broadcast our screen stream ID to all peers so they can identify it
-  function _broadcastScreenStreamId() {
-    if (!_screenStream) return;
-    Object.keys(pcs).forEach(peerId => {
-      socket.emit('screen-stream-id-to', { to: peerId, streamId: _screenStream.id });
-    });
-  }
-
+  // ── Public API ──
   async function callPeer(peerId) {
-    const pc = _getOrCreatePC(peerId);
-    // Tell them our screen stream ID before sending tracks
-    if (_screenStream) {
-      socket.emit('screen-stream-id-to', { to: peerId, streamId: _screenStream.id });
-    }
+    const pc = _getOrCreatePC(peerId, true);
+
+    // Send meta first, then tracks
+    if (_camStream)    _sendMeta(peerId, { type: 'stream-meta', streamId: _camStream.id, isScreen: false });
+    if (_screenStream) _sendMeta(peerId, { type: 'stream-meta', streamId: _screenStream.id, isScreen: true });
+
     _addAllTracks(pc);
+
     if (pc.getSenders().length === 0) {
       try {
         const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
         await pc.setLocalDescription(offer);
         socket.emit('offer', { to: peerId, offer: pc.localDescription });
-      } catch(e) { console.error('callPeer error:', e); }
+      } catch(err) { console.error('callPeer:', err); }
     }
   }
 
   async function _handleOffer(fromId, offer) {
-    const pc = _getOrCreatePC(fromId);
-    const offerCollision = pc.signalingState !== 'stable' || makingOffer[fromId];
-    if (offerCollision) {
+    const pc = _getOrCreatePC(fromId, false);
+    const collision = pc.signalingState !== 'stable' || makingOffer[fromId];
+    if (collision) {
       await Promise.all([
         pc.setLocalDescription({ type: 'rollback' }),
         pc.setRemoteDescription(new RTCSessionDescription(offer)),
@@ -171,53 +221,46 @@ const WebRTC = (() => {
     try {
       if (pc.signalingState === 'have-local-offer')
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    } catch(e) { console.error('handleAnswer error:', e); }
+    } catch(err) { console.error('handleAnswer:', err); }
   }
 
   async function _handleICE(fromId, candidate) {
     const pc = pcs[fromId];
     if (!pc) return;
-    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch(e) {}
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch(err) {}
   }
 
   function updateAllPeers() {
-    console.log(`[WebRTC] updateAllPeers, peers: ${Object.keys(pcs).length}`);
-    // Broadcast screen stream ID whenever we update
-    if (_screenStream) {
-      Object.keys(pcs).forEach(peerId => {
-        socket.emit('screen-stream-id-to', { to: peerId, streamId: _screenStream.id });
-      });
-    }
+    console.log(`[WebRTC] updateAllPeers`);
+    _broadcastStreamMeta();
+
     Object.entries(pcs).forEach(([peerId, pc]) => {
       const wanted = new Map();
       if (_camStream)    _camStream.getTracks().forEach(t => wanted.set(t, _camStream));
       if (_screenStream) _screenStream.getTracks().forEach(t => wanted.set(t, _screenStream));
 
       pc.getSenders().forEach(sender => {
-        if (sender.track && !wanted.has(sender.track)) {
-          pc.removeTrack(sender);
-        }
+        if (sender.track && !wanted.has(sender.track)) pc.removeTrack(sender);
       });
-
       const existing = pc.getSenders().map(s => s.track).filter(Boolean);
       wanted.forEach((stream, track) => {
-        if (!existing.includes(track)) {
-          pc.addTrack(track, stream);
-        }
+        if (!existing.includes(track)) pc.addTrack(track, stream);
       });
     });
   }
 
   function closeAll() {
     Object.values(pcs).forEach(pc => { try { pc.close(); } catch(e){} });
-    Object.keys(pcs).forEach(k => delete pcs[k]);
-    Object.keys(makingOffer).forEach(k => delete makingOffer[k]);
+    ['pcs','makingOffer','dataChannels','streamMeta','pendingStreams'].forEach(k => {
+      const obj = { pcs, makingOffer, dataChannels, streamMeta, pendingStreams }[k];
+      Object.keys(obj).forEach(key => delete obj[key]);
+    });
     stopLocalStreams();
   }
 
   function closePeer(peerId) {
     if (pcs[peerId]) { try { pcs[peerId].close(); } catch(e){} delete pcs[peerId]; }
-    delete makingOffer[peerId];
+    delete makingOffer[peerId]; delete dataChannels[peerId];
   }
 
   function stopLocalStreams() {

@@ -1,5 +1,5 @@
 /**
- * NovaCast — Main App (v7 fixed)
+ * NovaCast — Main App v8
  */
 const App = (() => {
 
@@ -71,10 +71,7 @@ const App = (() => {
   function autoFillRoomFromURL() {
     const p = new URLSearchParams(location.search);
     const rid = p.get('room');
-    if (rid) {
-      document.getElementById('joinInput').value = rid;
-      toast('🔗 Nhập biệt danh và nhấn "Vào phòng" để tham gia!', 'info');
-    }
+    if (rid) document.getElementById('joinInput').value = rid;
   }
 
   // ── ROOM ACTIONS ──
@@ -85,7 +82,7 @@ const App = (() => {
     clearLobbyError();
     socket.emit('create-room', { nick, avatar: myAvatar }, ({ roomId: rid }) => {
       roomId = rid;
-      doJoin();
+      doJoin(false);
     });
   }
 
@@ -96,12 +93,13 @@ const App = (() => {
     if (!rid)  { showLobbyError('Nhập Room ID!'); return; }
     myNick = nick; roomId = rid;
     clearLobbyError();
-    doJoin();
+    doJoin(true);
   }
 
-  function doJoin() {
+  function doJoin(isGuest) {
     socket.emit('join-room', { roomId, nick: myNick, avatar: myAvatar }, (res) => {
       if (res.error) { showLobbyError(res.error); return; }
+
       document.getElementById('lobby').classList.add('hidden');
       document.getElementById('room').classList.remove('hidden');
       document.getElementById('roomIdBadge').textContent = roomId;
@@ -116,15 +114,11 @@ const App = (() => {
       updatePeerCount();
       _initSwipeToClose();
 
-      // FIX: Only open invite modal when HOST creates room (not when joining via link)
-      // We distinguish by checking if URL had ?room= param before joining
-      const wasInvited = new URLSearchParams(location.search).get('room') !== null;
-      if (!wasInvited) {
-        // Small delay so room UI renders first
+      // Modal chỉ mở tự động cho host
+      if (!isGuest) {
         setTimeout(() => openModal(), 300);
       } else {
-        // Show invite link as a toast instead
-        toast('✅ Đã vào phòng! Nhấn 🔗 để mời thêm bạn bè', 'success');
+        toast('✅ Đã vào phòng! Nhấn 🔗 để mời thêm người', 'success');
       }
 
       res.members.forEach(m => WebRTC.callPeer(m.socketId));
@@ -150,8 +144,7 @@ const App = (() => {
   }
 
   function onChatMessage({ socketId, nick, avatar, text, time }) {
-    const isMine = socketId === socket.id;
-    appendChat(isMine, nick, avatar, text, time);
+    appendChat(socketId === socket.id, nick, avatar, text, time);
   }
 
   function onMediaState({ socketId, micOn: m, camOn: c, screenOn: s }) {
@@ -164,13 +157,15 @@ const App = (() => {
     }
   }
 
+  // ── REMOTE STREAM ──
   function onRemoteStream(peerId, stream, isScreen) {
+    console.log(`[App] onRemoteStream peer=${peerId.slice(-4)} isScreen=${isScreen} tracks=${stream.getTracks().length}`);
     const p = peers[peerId] || { nick: 'Khách', avatar: '👤' };
 
     if (!peerTiles[peerId]) peerTiles[peerId] = {};
-
     const tileKey = isScreen ? 'screen' : 'cam';
 
+    // Remove existing tile for this slot
     if (peerTiles[peerId][tileKey]) {
       const old = peerTiles[peerId][tileKey];
       if (old.dataset.streamId) delete streamTileMap[old.dataset.streamId];
@@ -178,8 +173,12 @@ const App = (() => {
       peerTiles[peerId][tileKey] = null;
     }
 
+    // Skip audio-only non-screen streams (no need for tile)
     const hasVideo = stream.getVideoTracks().length > 0;
-    if (!hasVideo && !isScreen) return;
+    if (!hasVideo) {
+      console.log(`[App] audio-only stream, skipping tile`);
+      return;
+    }
 
     const tile = makeTile(stream, p.avatar, p.nick, false, isScreen);
     tile.dataset.peer     = peerId;
@@ -197,9 +196,8 @@ const App = (() => {
       delete streamTileMap[streamId];
       if (peerTiles[peerId]) {
         const key = isScreen ? 'screen' : 'cam';
-        if (peerTiles[peerId][key] && peerTiles[peerId][key].dataset.streamId === streamId) {
+        if (peerTiles[peerId][key]?.dataset.streamId === streamId)
           peerTiles[peerId][key] = null;
-        }
       }
       refreshGrid();
       return;
@@ -224,20 +222,15 @@ const App = (() => {
   async function toggleMic() {
     if (!micOn) {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000, channelCount: 2 },
-          video: false
-        });
+        const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         if (!WebRTC.localCamStream) WebRTC.localCamStream = new MediaStream();
         s.getAudioTracks().forEach(t => WebRTC.localCamStream.addTrack(t));
         micOn = true;
         setCtrl('ctrlMic', true, '🎙️', 'Tắt mic');
         toast('🎙️ Mic đã bật');
-      } catch (e) { toast('Không thể bật mic: ' + e.message, 'warn'); return; }
+      } catch (e) { toast('Không thể bật mic', 'warn'); return; }
     } else {
-      if (WebRTC.localCamStream) {
-        WebRTC.localCamStream.getAudioTracks().forEach(t => { t.stop(); WebRTC.localCamStream.removeTrack(t); });
-      }
+      WebRTC.localCamStream?.getAudioTracks().forEach(t => { t.stop(); WebRTC.localCamStream.removeTrack(t); });
       micOn = false;
       setCtrl('ctrlMic', false, '🔇', 'Bật mic');
       toast('Mic đã tắt');
@@ -249,21 +242,16 @@ const App = (() => {
   async function toggleCamera() {
     if (!camOn) {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, min: 30 } },
-          audio: false
-        });
+        const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         if (!WebRTC.localCamStream) WebRTC.localCamStream = new MediaStream();
         s.getVideoTracks().forEach(t => WebRTC.localCamStream.addTrack(t));
         camOn = true;
         setCtrl('ctrlCam', true, '📷', 'Tắt camera');
         toast('📷 Camera đã bật');
         showMyCamTile();
-      } catch (e) { toast('Không thể bật camera: ' + e.message, 'warn'); return; }
+      } catch (e) { toast('Không thể bật camera', 'warn'); return; }
     } else {
-      if (WebRTC.localCamStream) {
-        WebRTC.localCamStream.getVideoTracks().forEach(t => { t.stop(); WebRTC.localCamStream.removeTrack(t); });
-      }
+      WebRTC.localCamStream?.getVideoTracks().forEach(t => { t.stop(); WebRTC.localCamStream.removeTrack(t); });
       camOn = false;
       setCtrl('ctrlCam', false, '📷', 'Bật camera');
       if (myTiles.cam) { myTiles.cam.remove(); myTiles.cam = null; }
@@ -278,20 +266,8 @@ const App = (() => {
     if (!screenOn) {
       try {
         const s = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            width: { ideal: 1920, max: 1920 },
-            height: { ideal: 1080, max: 1080 },
-            frameRate: { ideal: 60, max: 60 },
-          },
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-            sampleRate: 48000,
-            channelCount: 2
-          },
-          preferCurrentTab: false,
-          selfBrowserSurface: 'exclude',
+          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         });
 
         WebRTC.localScreenStream = s;
@@ -299,24 +275,15 @@ const App = (() => {
         setCtrl('ctrlScreen', true, '🖥️', 'Dừng chia sẻ');
 
         const hasAudio = s.getAudioTracks().length > 0;
-        const surfaceType = s.getVideoTracks()[0]?.getSettings()?.displaySurface;
-
-        let msg = '🖥️ Đang chia sẻ';
-        if (surfaceType === 'browser') msg += ' tab';
-        else if (surfaceType === 'window') msg += ' cửa sổ';
-        else msg += ' màn hình';
-        msg += hasAudio ? ' + âm thanh ✅' : '';
-        toast(msg, hasAudio ? 'success' : 'info');
+        toast('🖥️ Đang chia sẻ màn hình' + (hasAudio ? ' + âm thanh ✅' : ''), hasAudio ? 'success' : 'info');
 
         showMyScreenTile();
         WebRTC.updateAllPeers();
         emitState();
 
         s.getVideoTracks()[0].onended = () => _stopScreen();
-
       } catch (e) {
         if (e.name !== 'NotAllowedError') toast('Lỗi share màn hình: ' + e.message, 'warn');
-        return;
       }
     } else {
       _stopScreen();
@@ -324,52 +291,26 @@ const App = (() => {
   }
 
   async function toggleTab() {
-    if (screenOn) {
-      _stopScreen();
-      await new Promise(r => setTimeout(r, 300));
-    }
-    if (!screenOn) {
-      try {
-        const s = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            frameRate: { ideal: 60 },
-            displaySurface: 'browser',
-          },
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-            sampleRate: 48000,
-            channelCount: 2,
-            suppressLocalAudioPlayback: false,
-          },
-          preferCurrentTab: true,
-        });
-
-        WebRTC.localScreenStream = s;
-        screenOn = true;
-        setCtrl('ctrlScreen', true, '🖥️', 'Dừng chia sẻ');
-        document.getElementById('ctrlTab').classList.add('on');
-
-        const hasAudio = s.getAudioTracks().length > 0;
-        toast(
-          hasAudio ? '🔊 Đang chia sẻ tab + âm thanh ✅' : '⚠️ Không có âm thanh — hãy tích "Share tab audio"',
-          hasAudio ? 'success' : 'warn'
-        );
-
-        showMyScreenTile();
-        WebRTC.updateAllPeers();
-        emitState();
-
-        s.getVideoTracks()[0].onended = () => {
-          document.getElementById('ctrlTab').classList.remove('on');
-          _stopScreen();
-        };
-      } catch (e) {
-        if (e.name !== 'NotAllowedError') toast('Lỗi share tab: ' + e.message, 'warn');
-      }
+    if (screenOn) { _stopScreen(); await new Promise(r => setTimeout(r, 300)); }
+    if (screenOn) return;
+    try {
+      const s = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser' },
+        audio: { echoCancellation: false, noiseSuppression: false },
+        preferCurrentTab: true,
+      });
+      WebRTC.localScreenStream = s;
+      screenOn = true;
+      setCtrl('ctrlScreen', true, '🖥️', 'Dừng chia sẻ');
+      document.getElementById('ctrlTab').classList.add('on');
+      const hasAudio = s.getAudioTracks().length > 0;
+      toast(hasAudio ? '🔊 Chia sẻ tab + âm thanh ✅' : '⚠️ Không có âm thanh', hasAudio ? 'success' : 'warn');
+      showMyScreenTile();
+      WebRTC.updateAllPeers();
+      emitState();
+      s.getVideoTracks()[0].onended = () => { document.getElementById('ctrlTab').classList.remove('on'); _stopScreen(); };
+    } catch (e) {
+      if (e.name !== 'NotAllowedError') toast('Lỗi: ' + e.message, 'warn');
     }
   }
 
@@ -379,18 +320,16 @@ const App = (() => {
       WebRTC.localScreenStream = null;
     }
     screenOn = false;
-    setCtrl('ctrlScreen', false, '🖥️', 'Chia sẻ màn hình / cửa sổ');
+    setCtrl('ctrlScreen', false, '🖥️', 'Chia sẻ màn hình');
     document.getElementById('ctrlTab').classList.remove('on');
-
     if (myTiles.screen) {
       if (myTiles.screen.dataset.streamId) delete streamTileMap[myTiles.screen.dataset.streamId];
-      myTiles.screen.remove();
-      myTiles.screen = null;
+      myTiles.screen.remove(); myTiles.screen = null;
     }
     refreshGrid();
     emitState();
     WebRTC.updateAllPeers();
-    toast('Đã dừng chia sẻ màn hình');
+    toast('Đã dừng chia sẻ');
   }
 
   function showMyCamTile() {
@@ -400,8 +339,7 @@ const App = (() => {
     }
     const stream = WebRTC.localCamStream;
     const tile = makeTile(stream, myAvatar, myNick + ' (Bạn)', true, false);
-    tile.dataset.peer = 'local-cam';
-    tile.dataset.type = 'cam';
+    tile.dataset.peer = 'local'; tile.dataset.type = 'cam';
     if (stream) { tile.dataset.streamId = stream.id; streamTileMap[stream.id] = tile; }
     myTiles.cam = tile;
     addTile(tile);
@@ -414,8 +352,7 @@ const App = (() => {
     }
     const stream = WebRTC.localScreenStream;
     const tile = makeTile(stream, myAvatar, myNick + ' (Bạn)', true, true);
-    tile.dataset.peer = 'local-screen';
-    tile.dataset.type = 'screen';
+    tile.dataset.peer = 'local'; tile.dataset.type = 'screen';
     if (stream) { tile.dataset.streamId = stream.id; streamTileMap[stream.id] = tile; }
     myTiles.screen = tile;
     addTile(tile);
@@ -431,10 +368,32 @@ const App = (() => {
     tile.className = 'vtile' + (isScreen ? ' is-screen' : '');
 
     const video = document.createElement('video');
-    video.autoplay = true;
+    video.autoplay   = true;
     video.playsInline = true;
-    video.muted = muted;
-    if (stream) video.srcObject = stream;
+    video.muted      = muted;
+
+    if (stream) {
+      video.srcObject = stream;
+      // Force play — needed on some mobile browsers
+      const tryPlay = () => {
+        video.play().catch(err => {
+          console.warn('[Video] play() failed:', err.name);
+          // On user gesture needed: add a click-to-play overlay
+          if (err.name === 'NotAllowedError') {
+            tile.classList.add('needs-play');
+            tile.onclick = () => {
+              video.play().then(() => tile.classList.remove('needs-play')).catch(() => {});
+            };
+          }
+        });
+      };
+      if (video.readyState >= 2) {
+        tryPlay();
+      } else {
+        video.onloadedmetadata = tryPlay;
+      }
+    }
+
     tile.appendChild(video);
 
     const label = document.createElement('div');
@@ -449,13 +408,18 @@ const App = (() => {
       tile.appendChild(badge);
     }
 
+    // Click-to-play overlay HTML
+    const overlay = document.createElement('div');
+    overlay.className = 'play-overlay';
+    overlay.innerHTML = '▶';
+    tile.appendChild(overlay);
+
     return tile;
   }
 
   function addTile(tile) {
     const grid = document.getElementById('videoGrid');
-    const empty = document.getElementById('emptyVideo');
-    if (empty) empty.remove();
+    document.getElementById('emptyVideo')?.remove();
     grid.appendChild(tile);
     refreshGrid();
   }
@@ -463,7 +427,6 @@ const App = (() => {
   function refreshGrid() {
     const grid = document.getElementById('videoGrid');
     const tiles = grid.querySelectorAll('.vtile');
-
     grid.className = 'video-grid';
 
     if (tiles.length === 0) {
@@ -474,11 +437,10 @@ const App = (() => {
         grid.appendChild(e);
       }
       grid.classList.add('grid-1');
-    } else if (tiles.length === 1) { grid.classList.add('grid-1'); }
-    else if (tiles.length === 2)   { grid.classList.add('grid-2'); }
-    else if (tiles.length === 3)   { grid.classList.add('grid-3'); }
-    else if (tiles.length === 4)   { grid.classList.add('grid-4'); }
-    else                           { grid.classList.add('grid-n'); }
+    } else {
+      const n = tiles.length;
+      grid.classList.add(n === 1 ? 'grid-1' : n === 2 ? 'grid-2' : n === 3 ? 'grid-3' : n === 4 ? 'grid-4' : 'grid-n');
+    }
   }
 
   function updateTileLabel(peerId) {
@@ -514,9 +476,8 @@ const App = (() => {
       <div class="msg-body">${esc(text)}</div>`;
     area.appendChild(div);
     area.scrollTop = area.scrollHeight;
-    if (!isMine && !sidebarOpen) {
+    if (!isMine && !sidebarOpen)
       document.getElementById('sidebarToggle').classList.add('has-unread');
-    }
   }
 
   function systemMsg(text) {
@@ -531,25 +492,21 @@ const App = (() => {
   function renderPeople() {
     const list = document.getElementById('peopleList');
     list.innerHTML = '';
-
     const me = document.createElement('div');
     me.className = 'person';
-    me.innerHTML = `
-      <div class="person-av">${myAvatar}</div>
+    me.innerHTML = `<div class="person-av">${myAvatar}</div>
       <div class="person-info">
         <div class="person-name">${esc(myNick)} <span class="you-tag">Bạn</span></div>
-        <div class="person-status">${micOn ? '🎙️' : ''} ${camOn ? '📷' : ''} ${screenOn ? '🖥️' : ''}</div>
+        <div class="person-status">${micOn?'🎙️':''} ${camOn?'📷':''} ${screenOn?'🖥️':''}</div>
       </div>`;
     list.appendChild(me);
-
-    Object.entries(peers).forEach(([id, p]) => {
+    Object.entries(peers).forEach(([, p]) => {
       const el = document.createElement('div');
       el.className = 'person';
-      el.innerHTML = `
-        <div class="person-av">${p.avatar}</div>
+      el.innerHTML = `<div class="person-av">${p.avatar}</div>
         <div class="person-info">
           <div class="person-name">${esc(p.nick)}</div>
-          <div class="person-status">${p.micOn ? '🎙️' : ''} ${p.camOn ? '📷' : ''} ${p.screenOn ? '🖥️' : ''}</div>
+          <div class="person-status">${p.micOn?'🎙️':''} ${p.camOn?'📷':''} ${p.screenOn?'🖥️':''}</div>
         </div>`;
       list.appendChild(el);
     });
@@ -559,14 +516,13 @@ const App = (() => {
     document.getElementById('peerCount').textContent = 1 + Object.keys(peers).length;
   }
 
-  // ── SIDEBAR MOBILE ──
+  // ── SIDEBAR ──
   let sidebarOpen = false;
 
   function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    const btn = document.getElementById('sidebarToggle');
     sidebarOpen = !sidebarOpen;
-    sidebar.classList.toggle('open', sidebarOpen);
+    document.getElementById('sidebar').classList.toggle('open', sidebarOpen);
+    const btn = document.getElementById('sidebarToggle');
     btn.textContent = sidebarOpen ? '✕' : '💬';
     btn.classList.remove('has-unread');
   }
@@ -576,23 +532,20 @@ const App = (() => {
     let startY = 0, startTime = 0;
     sidebar.addEventListener('touchstart', e => { startY = e.touches[0].clientY; startTime = Date.now(); }, { passive: true });
     sidebar.addEventListener('touchend', e => {
-      const dy = e.changedTouches[0].clientY - startY;
-      const dt = Date.now() - startTime;
-      if (dy > 60 && dt < 400) {
-        sidebarOpen = true;
-        toggleSidebar();
+      if (e.changedTouches[0].clientY - startY > 60 && Date.now() - startTime < 400) {
+        sidebarOpen = true; toggleSidebar();
       }
     }, { passive: true });
   }
 
   function switchTab(tab) {
-    document.getElementById('panelChat').classList.toggle('hidden', tab !== 'chat');
-    document.getElementById('panelPeople').classList.toggle('hidden', tab !== 'people');
-    document.getElementById('tabChat').classList.toggle('active', tab === 'chat');
-    document.getElementById('tabPeople').classList.toggle('active', tab === 'people');
+    ['chat','people'].forEach(t => {
+      document.getElementById('panel' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('hidden', t !== tab);
+      document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
+    });
   }
 
-  // ── INVITE MODAL ──
+  // ── MODAL ──
   function openModal() {
     const url = new URL(location.href);
     url.searchParams.set('room', roomId);
@@ -601,14 +554,13 @@ const App = (() => {
   }
 
   function closeModal(e) {
-    if (!e || e.target.id === 'modalBg') {
+    if (!e || e.target.id === 'modalBg')
       document.getElementById('modalBg').classList.add('hidden');
-    }
   }
 
   function copyLink() {
-    const link = document.getElementById('inviteLinkText').textContent;
-    navigator.clipboard.writeText(link).then(() => toast('✅ Đã sao chép link!', 'success'));
+    navigator.clipboard.writeText(document.getElementById('inviteLinkText').textContent)
+      .then(() => toast('✅ Đã sao chép link!', 'success'));
   }
 
   // ── LEAVE ──
@@ -641,8 +593,7 @@ const App = (() => {
   function toast(msg, type = 'info') {
     const c = document.getElementById('toasts');
     const t = document.createElement('div');
-    t.className = 'toast ' + type;
-    t.textContent = msg;
+    t.className = 'toast ' + type; t.textContent = msg;
     c.appendChild(t);
     setTimeout(() => t.remove(), 3100);
   }
