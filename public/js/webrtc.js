@@ -8,11 +8,11 @@
  */
 const WebRTC = (() => {
 
-  const ICE = {
+  // ICE config fetched from server (includes TURN credentials)
+  let ICE = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
     ]
   };
 
@@ -28,10 +28,16 @@ const WebRTC = (() => {
   // peerId -> Set of streamIds already reported
   const reportedStreams = {};
 
-  function init(sock, cbs) {
+  async function init(sock, cbs) {
     socket         = sock;
     onRemoteStream = cbs.onRemoteStream;
     onRemoveStream = cbs.onRemoveStream;
+
+    // Fetch TURN credentials from server
+    try {
+      const res = await fetch('/ice-config');
+      if (res.ok) { ICE = await res.json(); console.log('[ICE] config loaded', ICE); }
+    } catch (e) { console.warn('[ICE] using fallback STUN only'); }
 
     socket.on('offer',         ({ from, offer, isScreen }) => _handleOffer(from, offer, isScreen));
     socket.on('answer',        ({ from, answer })          => _handleAnswer(from, answer));

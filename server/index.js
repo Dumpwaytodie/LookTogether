@@ -89,3 +89,24 @@ server.listen(PORT, () => {
     setInterval(() => { http.get(`${process.env.RENDER_EXTERNAL_URL}/health`).on('error', () => {}); }, 10 * 60 * 1000);
   }
 });
+
+// ICE config endpoint — trả TURN credentials cho client
+// Cấu hình: set TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL trong env
+app.get('/ice-config', (req, res) => {
+  const iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+  const { TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL } = process.env;
+  if (TURN_URLS && TURN_USERNAME && TURN_CREDENTIAL) {
+    iceServers.push({
+      urls: TURN_URLS.split(',').map(u => u.trim()),
+      username: TURN_USERNAME,
+      credential: TURN_CREDENTIAL,
+    });
+    console.log('[ICE] TURN enabled:', TURN_URLS);
+  } else {
+    console.warn('[ICE] TURN not configured — cross-network calls may fail');
+  }
+  res.json({ iceServers });
+});
