@@ -4,17 +4,8 @@
 const App = (() => {
 
   const AVATARS = ['🦊','🐺','🦁','🐯','🦝','🦋','🐙','🦄','🐻','🐼','🦅','🦉','🦈','🐉','🦑','🐬','🦖','🐧','🦩','🦚'];
-  const ADJ = [
-    'Sơn','Tùng','Mỹ','Tâm','Đức','Phúc','Hoàng','Thùy',
-    'Chi','Noo','Jack','Erik','Min','Trúc','Hà','Hương',
-    'Đen','Vũ','Bích','Phương','Hồ','Ngọc','Hòa','Miu'
-  ];
-
-  const NOUN = [
-    'M-TP','Sky','Fan','Vibe','Show','Live','Stage',
-    'Hit','Ballad','Remix','Acoustic','Rap','Idol',
-    'Queen','King','Legend','Star','Voice','Tour'
-  ];
+  const ADJ    = ['Rực','Tối','Băng','Lửa','Huyền','Sóng','Thần','Mờ','Lượn','Tàng','Kim','Ngọc'];
+  const NOUN   = ['Long','Hổ','Ưng','Rồng','Sói','Bão','Kiếm','Mây','Tước','Phong','Lôi','Hải'];
 
   let socket = null;
   let myId   = null;
@@ -130,6 +121,7 @@ const App = (() => {
       renderPeople();
       updatePeerCount();
       openModal();
+      _initSwipeToClose();
 
       // Call existing members
       res.members.forEach(m => WebRTC.callPeer(m.socketId));
@@ -290,29 +282,42 @@ const App = (() => {
   async function toggleScreen() {
     if (!screenOn) {
       try {
-        const s = await navigator.mediaDevices.getDisplayMedia({
+        // preferCurrentTab: true → Chrome ưu tiên share tab hiện tại kèm audio
+        // Khi share tab YouTube/video → tích "Share tab audio" trong dialog Chrome
+        const constraints = {
           video: {
             width: { ideal: 1920, max: 1920 },
             height: { ideal: 1080, max: 1080 },
             frameRate: { ideal: 60, max: 60 },
-            displaySurface: 'monitor'
           },
-          // Request system audio — user must tick "Share audio" in Chrome dialog
           audio: {
             echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: false,
             sampleRate: 48000,
             channelCount: 2
-          }
-        });
+          },
+          // Gợi ý Chrome ưu tiên chọn tab (có audio) thay vì màn hình
+          preferCurrentTab: false,
+          selfBrowserSurface: 'exclude',
+        };
+
+        const s = await navigator.mediaDevices.getDisplayMedia(constraints);
 
         WebRTC.localScreenStream = s;
         screenOn = true;
         setCtrl('ctrlScreen', true, '🖥️', 'Dừng chia sẻ');
 
         const hasAudio = s.getAudioTracks().length > 0;
-        toast(`🖥️ Đang chia sẻ màn hình${hasAudio ? ' + âm thanh' : ' (không có âm thanh hệ thống)'}`, 'success');
+        const surfaceType = s.getVideoTracks()[0]?.getSettings()?.displaySurface;
+
+        let msg = '🖥️ Đang chia sẻ';
+        if (surfaceType === 'browser') msg += ' tab';
+        else if (surfaceType === 'window') msg += ' cửa sổ';
+        else msg += ' màn hình';
+        msg += hasAudio ? ' + âm thanh ✅' : ' (không có âm thanh — hãy chọn "Tab" và tích "Share audio")';
+
+        toast(msg, hasAudio ? 'success' : 'warn');
 
         showMyScreenTile();
         WebRTC.updateAllPeers();
@@ -332,6 +337,60 @@ const App = (() => {
     }
   }
 
+  // Share tab trình duyệt — cách duy nhất để có audio YouTube/web
+  async function toggleTab() {
+    if (screenOn) {
+      // Dừng screen share hiện tại trước
+      _stopScreen();
+      await new Promise(r => setTimeout(r, 300));
+    }
+    if (!screenOn) {
+      try {
+        const s = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 60 },
+            displaySurface: 'browser', // gợi ý chọn tab
+          },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            sampleRate: 48000,
+            channelCount: 2,
+            suppressLocalAudioPlayback: false,
+          },
+          preferCurrentTab: true, // Chrome sẽ chọn tab hiện tại trước
+        });
+
+        WebRTC.localScreenStream = s;
+        screenOn = true;
+        setCtrl('ctrlScreen', true, '🖥️', 'Dừng chia sẻ');
+        document.getElementById('ctrlTab').classList.add('on');
+
+        const hasAudio = s.getAudioTracks().length > 0;
+        toast(
+          hasAudio
+            ? '🔊 Đang chia sẻ tab + âm thanh ✅'
+            : '⚠️ Không có âm thanh — hãy tích "Share tab audio" trong dialog Chrome',
+          hasAudio ? 'success' : 'warn'
+        );
+
+        showMyScreenTile();
+        WebRTC.updateAllPeers();
+        emitState();
+
+        s.getVideoTracks()[0].onended = () => {
+          document.getElementById('ctrlTab').classList.remove('on');
+          _stopScreen();
+        };
+      } catch (e) {
+        if (e.name !== 'NotAllowedError') toast('Lỗi share tab: ' + e.message, 'warn');
+      }
+    }
+  }
+
   function _stopScreen() {
     // Stop all tracks first
     if (WebRTC.localScreenStream) {
@@ -339,7 +398,8 @@ const App = (() => {
       WebRTC.localScreenStream = null;  // must be null BEFORE updateAllPeers
     }
     screenOn = false;
-    setCtrl('ctrlScreen', false, '🖥️', 'Chia sẻ màn hình');
+    setCtrl('ctrlScreen', false, '🖥️', 'Chia sẻ màn hình / cửa sổ');
+    document.getElementById('ctrlTab').classList.remove('on');
 
     // Remove local screen tile
     if (myTiles.screen) {
@@ -481,7 +541,11 @@ const App = (() => {
       <div class="msg-body">${esc(text)}</div>`;
     area.appendChild(div);
     area.scrollTop = area.scrollHeight;
-    if (!isMine) switchTab('chat');
+    if (!isMine) {
+      if (!sidebarOpen) {
+        document.getElementById('sidebarToggle').classList.add('has-unread');
+      }
+    }
   }
 
   function systemMsg(text) {
@@ -525,7 +589,31 @@ const App = (() => {
     document.getElementById('peerCount').textContent = 1 + Object.keys(peers).length;
   }
 
-  // ── TABS ──
+  // ── SIDEBAR MOBILE ──
+  let sidebarOpen = false;
+
+  function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const btn = document.getElementById('sidebarToggle');
+    sidebarOpen = !sidebarOpen;
+    sidebar.classList.toggle('open', sidebarOpen);
+    btn.textContent = sidebarOpen ? '✕' : '💬';
+    btn.classList.remove('has-unread');
+  }
+
+  function _initSwipeToClose() {
+    const sidebar = document.getElementById('sidebar');
+    let startY = 0, startTime = 0;
+    sidebar.addEventListener('touchstart', e => { startY = e.touches[0].clientY; startTime = Date.now(); }, { passive: true });
+    sidebar.addEventListener('touchend', e => {
+      const dy = e.changedTouches[0].clientY - startY;
+      const dt = Date.now() - startTime;
+      if (dy > 60 && dt < 400) { // swipe down
+        sidebarOpen = true;
+        toggleSidebar();
+      }
+    }, { passive: true });
+  }
   function switchTab(tab) {
     document.getElementById('panelChat').classList.toggle('hidden', tab !== 'chat');
     document.getElementById('panelPeople').classList.toggle('hidden', tab !== 'people');
@@ -597,5 +685,5 @@ const App = (() => {
   // Patch: make onChatMessage accessible
   window.addEventListener('DOMContentLoaded', init);
 
-  return { toggleMic, toggleCamera, toggleScreen, sendChat, switchTab, openModal, closeModal, copyLink, leave };
+  return { toggleMic, toggleCamera, toggleScreen, toggleTab, toggleSidebar, sendChat, switchTab, openModal, closeModal, copyLink, leave };
 })();

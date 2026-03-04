@@ -67,14 +67,18 @@
       <div class="controls-bar">
         <button class="ctrl" id="ctrlMic" data-tip="Bật mic" onclick="App.toggleMic()">🔇</button>
         <button class="ctrl" id="ctrlCam" data-tip="Bật camera" onclick="App.toggleCamera()">📷</button>
-        <button class="ctrl" id="ctrlScreen" data-tip="Chia sẻ màn hình" onclick="App.toggleScreen()">🖥️</button>
+        <button class="ctrl" id="ctrlScreen" data-tip="Chia sẻ màn hình / cửa sổ" onclick="App.toggleScreen()">🖥️</button>
+        <button class="ctrl" id="ctrlTab" data-tip="Chia sẻ tab (có âm thanh YouTube...)" onclick="App.toggleTab()">🔊</button>
         <div class="ctrl-sep"></div>
         <button class="ctrl ctrl-danger" data-tip="Rời phòng" onclick="App.leave()">📵</button>
       </div>
     </div>
 
+    <!-- Sidebar toggle (mobile) -->
+    <button class="sidebar-toggle" id="sidebarToggle" onclick="App.toggleSidebar()">💬</button>
+
     <!-- Sidebar -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="tab-bar">
         <button class="tab active" id="tabChat" onclick="App.switchTab('chat')">💬 Chat</button>
         <button class="tab" id="tabPeople" onclick="App.switchTab('people')">👥 Người dùng</button>
@@ -115,7 +119,7 @@
 <div id="toasts"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/js/webrtc.js?v=2"></script>
-<script src="/js/app.js?v=2"></script>
+<script src="/js/webrtc.js?v=4"></script>
+<script src="/js/app.js?v=4"></script>
 </body>
 </html>
