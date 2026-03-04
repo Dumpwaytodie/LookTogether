@@ -1,7 +1,5 @@
 /**
- * WebRTC Manager — v5
- * Dùng onnegotiationneeded thay vì tự tay renegotiate
- * Tránh race condition khi add/remove tracks
+ * WebRTC Manager — v7 (fixed screen share detection + signaling)
  */
 const WebRTC = (() => {
 
@@ -13,8 +11,12 @@ const WebRTC = (() => {
     ]
   };
 
-  const pcs       = {};  // peerId -> RTCPeerConnection
-  const makingOffer = {}; // peerId -> bool (perfect negotiation)
+  const pcs         = {};  // peerId -> RTCPeerConnection
+  const makingOffer = {};  // peerId -> bool
+
+  // Track which streamIds are screen shares (set when we ADD tracks)
+  // Format: streamId -> true/false
+  const screenStreamIds = {};
 
   let _camStream    = null;
   let _screenStream = null;
@@ -26,9 +28,16 @@ const WebRTC = (() => {
     socket         = sock;
     onRemoteStream = cbs.onRemoteStream;
     onRemoveStream = cbs.onRemoveStream;
-    socket.on('offer',         ({ from, offer, polite })     => _handleOffer(from, offer, polite));
+    socket.on('offer',         ({ from, offer })     => _handleOffer(from, offer));
     socket.on('answer',        ({ from, answer })    => _handleAnswer(from, answer));
     socket.on('ice-candidate', ({ from, candidate }) => _handleICE(from, candidate));
+    // NEW: receive screen stream ID mapping from remote peer
+    socket.on('screen-stream-id', ({ from, streamId }) => {
+      if (streamId) {
+        screenStreamIds[streamId] = true;
+        console.log(`[WebRTC] Got screen-stream-id from ${from.slice(-4)}: ${streamId}`);
+      }
+    });
   }
 
   function _getOrCreatePC(peerId) {
@@ -42,37 +51,36 @@ const WebRTC = (() => {
       if (candidate) socket.emit('ice-candidate', { to: peerId, candidate });
     };
 
-    const receivedStreams = {};
+    const reportedStreams = new Set();
 
     pc.ontrack = (e) => {
       const stream = e.streams && e.streams[0];
       if (!stream) return;
 
-      if (!receivedStreams[stream.id]) {
-        const label = e.track.label || '';
-        const isScreen = /screen|display|monitor|window|entire/i.test(label);
-        receivedStreams[stream.id] = { isScreen, reported: false };
-      }
+      // Wait a tick so screenStreamIds has time to be populated
+      setTimeout(() => {
+        if (!reportedStreams.has(stream.id)) {
+          reportedStreams.add(stream.id);
+          // Check if this streamId was flagged as a screen share by remote
+          const isScreen = !!screenStreamIds[stream.id];
+          console.log(`[WebRTC] ontrack stream=${stream.id.slice(-6)} isScreen=${isScreen}`);
+          onRemoteStream(peerId, stream, isScreen);
+        }
 
-      const meta = receivedStreams[stream.id];
-      if (!meta.reported) {
-        meta.reported = true;
-        onRemoteStream(peerId, stream, meta.isScreen);
-      }
-
-      e.track.onended = () => {
-        setTimeout(() => {
-          const live = stream.getTracks().filter(t => t.readyState === 'live').length;
-          if (live === 0 && receivedStreams[stream.id]) {
-            const { isScreen } = receivedStreams[stream.id];
-            delete receivedStreams[stream.id];
-            onRemoveStream(peerId, isScreen, stream.id);
-          }
-        }, 300);
-      };
+        e.track.onended = () => {
+          setTimeout(() => {
+            const live = stream.getTracks().filter(t => t.readyState === 'live').length;
+            if (live === 0) {
+              const wasScreen = !!screenStreamIds[stream.id];
+              delete screenStreamIds[stream.id];
+              reportedStreams.delete(stream.id);
+              onRemoveStream(peerId, wasScreen, stream.id);
+            }
+          }, 300);
+        };
+      }, 100);
     };
 
-    // Perfect negotiation: onnegotiationneeded tự trigger khi add track
     pc.onnegotiationneeded = async () => {
       try {
         makingOffer[peerId] = true;
@@ -89,9 +97,7 @@ const WebRTC = (() => {
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
       console.log(`[PC:${peerId.slice(-4)}] ${s}`);
-      if (s === 'failed') {
-        pc.restartIce();
-      }
+      if (s === 'failed') pc.restartIce();
       if (s === 'closed') {
         onRemoveStream(peerId, false, null);
         onRemoveStream(peerId, true, null);
@@ -118,12 +124,21 @@ const WebRTC = (() => {
     }
   }
 
-  // Gọi peer lần đầu
+  // Broadcast our screen stream ID to all peers so they can identify it
+  function _broadcastScreenStreamId() {
+    if (!_screenStream) return;
+    Object.keys(pcs).forEach(peerId => {
+      socket.emit('screen-stream-id-to', { to: peerId, streamId: _screenStream.id });
+    });
+  }
+
   async function callPeer(peerId) {
     const pc = _getOrCreatePC(peerId);
+    // Tell them our screen stream ID before sending tracks
+    if (_screenStream) {
+      socket.emit('screen-stream-id-to', { to: peerId, streamId: _screenStream.id });
+    }
     _addAllTracks(pc);
-    // onnegotiationneeded sẽ tự trigger sau addTrack
-    // Nếu không có track nào (peer join phòng trống), tạo offer thủ công
     if (pc.getSenders().length === 0) {
       try {
         const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
@@ -133,13 +148,10 @@ const WebRTC = (() => {
     }
   }
 
-  // Perfect negotiation: xử lý offer từ remote
   async function _handleOffer(fromId, offer) {
     const pc = _getOrCreatePC(fromId);
-    // Nếu chúng ta cũng đang tạo offer (collision) → chúng ta là "polite" side nên rollback
     const offerCollision = pc.signalingState !== 'stable' || makingOffer[fromId];
     if (offerCollision) {
-      console.log(`[WebRTC] Offer collision with ${fromId.slice(-4)}, rolling back`);
       await Promise.all([
         pc.setLocalDescription({ type: 'rollback' }),
         pc.setRemoteDescription(new RTCSessionDescription(offer)),
@@ -147,13 +159,10 @@ const WebRTC = (() => {
     } else {
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
     }
-
     _addAllTracks(pc);
-
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     socket.emit('answer', { to: fromId, answer: pc.localDescription });
-    console.log(`[WebRTC] Answered offer from ${fromId.slice(-4)}`);
   }
 
   async function _handleAnswer(fromId, answer) {
@@ -171,32 +180,31 @@ const WebRTC = (() => {
     try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch(e) {}
   }
 
-  // Khi stream thay đổi: sync tracks trên tất cả PC
   function updateAllPeers() {
     console.log(`[WebRTC] updateAllPeers, peers: ${Object.keys(pcs).length}`);
+    // Broadcast screen stream ID whenever we update
+    if (_screenStream) {
+      Object.keys(pcs).forEach(peerId => {
+        socket.emit('screen-stream-id-to', { to: peerId, streamId: _screenStream.id });
+      });
+    }
     Object.entries(pcs).forEach(([peerId, pc]) => {
-      // Xác định tracks cần có
       const wanted = new Map();
       if (_camStream)    _camStream.getTracks().forEach(t => wanted.set(t, _camStream));
       if (_screenStream) _screenStream.getTracks().forEach(t => wanted.set(t, _screenStream));
 
-      // Xóa tracks không cần nữa
       pc.getSenders().forEach(sender => {
         if (sender.track && !wanted.has(sender.track)) {
           pc.removeTrack(sender);
-          console.log(`[WebRTC] Removed track from ${peerId.slice(-4)}`);
         }
       });
 
-      // Thêm tracks mới
       const existing = pc.getSenders().map(s => s.track).filter(Boolean);
       wanted.forEach((stream, track) => {
         if (!existing.includes(track)) {
           pc.addTrack(track, stream);
-          console.log(`[WebRTC] Added track to ${peerId.slice(-4)}`);
         }
       });
-      // onnegotiationneeded sẽ tự trigger sau khi add/remove
     });
   }
 

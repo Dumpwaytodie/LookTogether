@@ -19,7 +19,6 @@
   --glow-c: rgba(34,211,238,0.25);
 }
 
-/* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {
@@ -27,7 +26,6 @@ body {
   background: var(--bg); color: var(--text);
   height: 100vh; height: 100dvh;
   overflow: hidden;
-  /* Prevent iOS bounce */
   overscroll-behavior: none;
 }
 .hidden { display: none !important; }
@@ -68,24 +66,20 @@ input, button { font-family: inherit; }
   width: 100%; background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 13px 16px; color: var(--text); font-size: 16px;
   outline: none; transition: border-color .2s, box-shadow .2s;
-  /* Prevent iOS zoom on focus */
   -webkit-appearance: none;
 }
 .form-group input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--glow-c); }
 
-/* Avatar picker */
 .avatar-picker { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
 .av-opt {
   width: 44px; height: 44px; border-radius: 12px; cursor: pointer;
   border: 2px solid transparent; transition: all .18s;
   font-size: 22px; display: flex; align-items: center; justify-content: center;
   background: var(--surface);
-  /* Touch-friendly */
   -webkit-tap-highlight-color: transparent;
 }
 .av-opt.selected { border-color: var(--accent); background: var(--accent-dim); box-shadow: 0 0 12px var(--glow-c); }
 
-/* Buttons */
 .btn {
   padding: 14px 20px; border: none; border-radius: 12px;
   font-size: 15px; font-weight: 600; cursor: pointer;
@@ -114,7 +108,6 @@ input, button { font-family: inherit; }
 /* ── ROOM ── */
 #room { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 
-/* Header */
 .room-header {
   height: 52px; flex-shrink: 0;
   background: var(--surface); border-bottom: 1px solid var(--border);
@@ -145,10 +138,8 @@ input, button { font-family: inherit; }
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Room body */
 .room-body { flex: 1; display: flex; overflow: hidden; position: relative; min-height: 0; }
 
-/* Video column */
 .video-col { flex: 1; display: flex; flex-direction: column; background: #04060d; min-width: 0; min-height: 0; overflow: hidden; }
 .video-grid {
   flex: 1; padding: 8px; gap: 6px;
@@ -164,7 +155,6 @@ input, button { font-family: inherit; }
 .ev-title { font-size: 15px; font-weight: 600; }
 .ev-sub { font-size: 12px; text-align: center; padding: 0 20px; }
 
-/* Video tile */
 .vtile {
   background: var(--card); border: 1px solid var(--border);
   border-radius: 12px; position: relative; overflow: hidden; min-height: 0;
@@ -185,7 +175,6 @@ input, button { font-family: inherit; }
 }
 .vtile-muted { color: var(--red); font-size: 10px; }
 
-/* Grid layouts */
 .grid-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
 .grid-2 { grid-template-columns: 1fr 1fr; }
 .grid-3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
@@ -193,12 +182,10 @@ input, button { font-family: inherit; }
 .grid-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 .grid-n { grid-template-columns: repeat(3, 1fr); }
 
-/* Controls bar */
 .controls-bar {
   height: 72px; flex-shrink: 0;
   background: var(--surface); border-top: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center; gap: 10px;
-  /* Safe area for iPhone home bar */
   padding-bottom: env(safe-area-inset-bottom);
 }
 .ctrl {
@@ -216,7 +203,6 @@ input, button { font-family: inherit; }
 .ctrl-danger { background: var(--red-dim); border-color: rgba(248,113,113,.4); }
 .ctrl-danger:active { background: var(--red); color: #fff; }
 .ctrl-sep { width: 1px; height: 30px; background: var(--border); margin: 0 2px; }
-/* Tooltip — desktop only */
 @media (hover: hover) {
   .ctrl::after {
     content: attr(data-tip);
@@ -231,7 +217,7 @@ input, button { font-family: inherit; }
   .ctrl:hover { background: var(--border2); transform: scale(1.06); }
 }
 
-/* ── SIDEBAR — Desktop ── */
+/* ── SIDEBAR ── */
 .sidebar {
   width: 300px; flex-shrink: 0;
   background: var(--surface); border-left: 1px solid var(--border);
@@ -250,7 +236,6 @@ input, button { font-family: inherit; }
 
 .panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
-/* Chat */
 .messages {
   flex: 1; overflow-y: auto; padding: 12px 12px 6px;
   display: flex; flex-direction: column; gap: 10px;
@@ -299,7 +284,6 @@ input, button { font-family: inherit; }
 }
 .send-btn:active { opacity: 0.8; }
 
-/* People */
 .people-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; -webkit-overflow-scrolling: touch; }
 .person {
   display: flex; align-items: center; gap: 12px;
@@ -312,7 +296,6 @@ input, button { font-family: inherit; }
 .you-tag { font-size: 10px; background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent-border); border-radius: 4px; padding: 1px 5px; }
 .person-status { font-size: 12px; color: var(--muted2); margin-top: 2px; }
 
-/* ── SIDEBAR TOGGLE BUTTON (mobile) ── */
 .sidebar-toggle {
   display: none;
   position: absolute; right: 12px; bottom: 82px;
@@ -327,96 +310,29 @@ input, button { font-family: inherit; }
 }
 .sidebar-toggle:active { transform: scale(0.9); }
 
-/* ── MOBILE SIDEBAR (bottom sheet) ── */
-@media (max-width: 640px) {
-  /* Lobby */
-  .lobby-card { padding: 28px 22px; border-radius: 20px; }
-  .logo { font-size: 28px; }
-  .tagline { font-size: 12px; margin-bottom: 22px; }
-  .quality-tag, .room-id-badge { display: none; }
-
-  /* Room body — video takes all space */
-  .room-body { flex-direction: column; }
-  .video-col { flex: 1; min-height: 0; }
-
-  /* Sidebar becomes bottom sheet */
-  .sidebar {
-    position: absolute; bottom: 0; left: 0; right: 0;
-    width: 100%;
-    /* Height = viewport - header - controls */
-    height: calc(100dvh - 48px - 80px);
-    max-height: 70%;
-    border-left: none; border-top: 1px solid var(--border);
-    border-radius: 20px 20px 0 0;
-    transform: translateY(100%);
-    transition: transform .3s cubic-bezier(.32,.72,0,1);
-    z-index: 20;
-    box-shadow: 0 -8px 40px rgba(0,0,0,.6);
-    /* Fix: sidebar needs to be a flex column so panel fills it */
-    display: flex;
-    flex-direction: column;
-  }
-  .sidebar.open { transform: translateY(0); }
-
-  /* Drag handle */
-  .sidebar::before {
-    content: '';
-    display: block; width: 36px; height: 4px;
-    background: var(--border2); border-radius: 4px;
-    margin: 10px auto 4px;
-    flex-shrink: 0;
-  }
-
-  /* panel phải flex:1 và overflow đúng */
-  .sidebar .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .sidebar .messages { flex: 1; min-height: 0; overflow-y: auto; }
-  .sidebar .people-list { flex: 1; min-height: 0; overflow-y: auto; }
-
-  /* Show toggle button */
-  .sidebar-toggle { display: flex; }
-
-  /* Controls bar bigger for touch */
-  .controls-bar { height: 80px; gap: 8px; }
-  .ctrl { width: 56px; height: 56px; font-size: 24px; border-radius: 18px; }
-
-  /* Header compact */
-  .room-header { height: 48px; padding: 0 12px; gap: 8px; }
-  .logo-sm { font-size: 15px; }
-  .peer-pill { padding: 3px 8px; font-size: 11px; }
-  .btn-invite { padding: 5px 10px; font-size: 11px; }
-
-  /* Unread badge on toggle */
-  .sidebar-toggle.has-unread::after {
-    content: '';
-    position: absolute; top: 4px; right: 4px;
-    width: 10px; height: 10px; border-radius: 50%;
-    background: var(--red); border: 2px solid var(--bg);
-  }
-
-  /* Toast at bottom */
-  #toasts { top: auto; bottom: 90px; right: 12px; left: 12px; }
-  .toast { max-width: 100%; }
-}
-
-@media (max-width: 380px) {
-  .ctrl { width: 50px; height: 50px; font-size: 20px; }
-  .controls-bar { gap: 6px; }
-}
-
-/* ── MODAL ── */
+/* ── MODAL — FIX: scrollable on mobile ── */
 .modal-bg {
-  position: fixed; inset: 0; background: rgba(0,0,0,.8);
+  position: fixed; inset: 0; background: rgba(0,0,0,.85);
   backdrop-filter: blur(6px); z-index: 1000;
   display: flex; align-items: center; justify-content: center;
-  padding: 20px;
+  padding: 16px;
+  /* FIX: allow scrolling if modal is too tall */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .modal {
   background: var(--card); border: 1px solid var(--border2);
-  border-radius: 20px; padding: 28px 28px; width: 100%; max-width: 440px;
+  border-radius: 20px; padding: 28px 24px; width: 100%; max-width: 440px;
   box-shadow: 0 24px 64px rgba(0,0,0,.6);
+  /* FIX: prevent modal from being taller than viewport */
+  max-height: 90vh;
+  overflow-y: auto;
+  /* FIX: don't shrink on mobile */
+  flex-shrink: 0;
+  margin: auto;
 }
 .modal-title { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 700; margin-bottom: 8px; }
-.modal-sub { color: var(--muted2); font-size: 13px; margin-bottom: 16px; }
+.modal-sub { color: var(--muted2); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
 .link-row {
   display: flex; gap: 8px; align-items: center;
   background: var(--surface); border: 1px solid var(--border);
@@ -431,10 +347,85 @@ input, button { font-family: inherit; }
   -webkit-tap-highlight-color: transparent;
 }
 .modal-close-btn {
-  width: 100%; padding: 12px; background: var(--surface);
+  width: 100%; padding: 14px; background: var(--surface);
   border: 1px solid var(--border); border-radius: 10px;
-  color: var(--muted2); font-size: 14px; cursor: pointer;
+  color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  /* FIX: make close button more tappable */
+  min-height: 48px;
+}
+.modal-close-btn:active { background: var(--border2); }
+
+/* ── MOBILE ── */
+@media (max-width: 640px) {
+  .lobby-card { padding: 28px 22px; border-radius: 20px; }
+  .logo { font-size: 28px; }
+  .tagline { font-size: 12px; margin-bottom: 22px; }
+  .quality-tag, .room-id-badge { display: none; }
+
+  .room-body { flex-direction: column; }
+  .video-col { flex: 1; min-height: 0; }
+
+  .sidebar {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: calc(100dvh - 48px - 80px);
+    max-height: 70%;
+    border-left: none; border-top: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    transform: translateY(100%);
+    transition: transform .3s cubic-bezier(.32,.72,0,1);
+    z-index: 20;
+    box-shadow: 0 -8px 40px rgba(0,0,0,.6);
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar.open { transform: translateY(0); }
+
+  .sidebar::before {
+    content: '';
+    display: block; width: 36px; height: 4px;
+    background: var(--border2); border-radius: 4px;
+    margin: 10px auto 4px;
+    flex-shrink: 0;
+  }
+
+  .sidebar .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .sidebar .messages { flex: 1; min-height: 0; overflow-y: auto; }
+  .sidebar .people-list { flex: 1; min-height: 0; overflow-y: auto; }
+
+  .sidebar-toggle { display: flex; }
+
+  .controls-bar { height: 80px; gap: 8px; }
+  .ctrl { width: 56px; height: 56px; font-size: 24px; border-radius: 18px; }
+
+  .room-header { height: 48px; padding: 0 12px; gap: 8px; }
+  .logo-sm { font-size: 15px; }
+  .peer-pill { padding: 3px 8px; font-size: 11px; }
+  .btn-invite { padding: 5px 10px; font-size: 11px; }
+
+  .sidebar-toggle.has-unread::after {
+    content: '';
+    position: absolute; top: 4px; right: 4px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--red); border: 2px solid var(--bg);
+  }
+
+  #toasts { top: auto; bottom: 90px; right: 12px; left: 12px; }
+  .toast { max-width: 100%; }
+
+  /* FIX MODAL on mobile: smaller padding, always fits */
+  .modal-bg { padding: 12px; align-items: flex-end; }
+  .modal {
+    border-radius: 20px 20px 16px 16px;
+    padding: 24px 20px 20px;
+    max-height: 85vh;
+  }
+}
+
+@media (max-width: 380px) {
+  .ctrl { width: 50px; height: 50px; font-size: 20px; }
+  .controls-bar { gap: 6px; }
 }
 
 /* ── TOAST ── */

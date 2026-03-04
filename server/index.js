@@ -29,12 +29,10 @@ io.on('connection', (socket) => {
   let myInfo = null;
 
   // ── CREATE ROOM ──
-  // Tạo phòng và tự join luôn
   socket.on('create-room', ({ nick, avatar }, cb) => {
     const roomId = getRoomId();
     rooms[roomId] = {};
 
-    // Host tự join room ngay
     currentRoom = roomId;
     myInfo = { socketId: socket.id, nick, avatar };
     rooms[roomId][socket.id] = myInfo;
@@ -48,13 +46,10 @@ io.on('connection', (socket) => {
   socket.on('join-room', ({ roomId, nick, avatar }, cb) => {
     roomId = roomId.toUpperCase().trim();
 
-    // Nếu phòng chưa tồn tại (server restart mất data) → tự tạo lại
-    // Điều này cho phép người dùng join qua link dù server đã restart
     if (!rooms[roomId]) {
       rooms[roomId] = {};
     }
 
-    // Nếu socket này đã ở trong phòng rồi (tránh join 2 lần)
     if (currentRoom === roomId) {
       cb({ success: true, members: getRoomMembers(roomId).filter(m => m.socketId !== socket.id) });
       return;
@@ -95,6 +90,13 @@ io.on('connection', (socket) => {
 
   socket.on('ice-candidate', ({ to, candidate }) => {
     socket.to(to).emit('ice-candidate', { from: socket.id, candidate });
+  });
+
+  // ── SCREEN STREAM ID RELAY (NEW) ──
+  // Relay the screen stream ID so the remote peer can correctly
+  // identify which incoming stream is a screen share
+  socket.on('screen-stream-id-to', ({ to, streamId }) => {
+    socket.to(to).emit('screen-stream-id', { from: socket.id, streamId });
   });
 
   // ── MEDIA STATE ──

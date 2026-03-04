@@ -1,5 +1,5 @@
 /**
- * NovaCast — Main App
+ * NovaCast — Main App (v7 fixed)
  */
 const App = (() => {
 
@@ -13,13 +13,9 @@ const App = (() => {
   let myAvatar = AVATARS[0];
   let roomId  = '';
 
-  // peerId -> { nick, avatar, micOn, camOn, screenOn }
   const peers = {};
-
-  // peerId -> { cam: HTMLElement|null, screen: HTMLElement|null }
   const peerTiles = {};
   const myTiles   = { cam: null, screen: null };
-  // streamId -> tile element (for precise removal)
   const streamTileMap = {};
 
   let micOn    = false;
@@ -39,7 +35,7 @@ const App = (() => {
     socket = io();
     myId = socket.id;
 
-    socket.on('connect',    () => { myId = socket.id; });
+    socket.on('connect',     () => { myId = socket.id; });
     socket.on('user-joined', onUserJoined);
     socket.on('user-left',   onUserLeft);
     socket.on('chat',        onChatMessage);
@@ -106,13 +102,11 @@ const App = (() => {
   function doJoin() {
     socket.emit('join-room', { roomId, nick: myNick, avatar: myAvatar }, (res) => {
       if (res.error) { showLobbyError(res.error); return; }
-      // Enter room UI
       document.getElementById('lobby').classList.add('hidden');
       document.getElementById('room').classList.remove('hidden');
       document.getElementById('roomIdBadge').textContent = roomId;
       updateURL();
 
-      // Existing members
       res.members.forEach(m => {
         peers[m.socketId] = { nick: m.nick, avatar: m.avatar, micOn: false, camOn: false, screenOn: false };
       });
@@ -120,10 +114,19 @@ const App = (() => {
       systemMsg(`Chào ${myAvatar} ${myNick}! Room: ${roomId}`);
       renderPeople();
       updatePeerCount();
-      openModal();
       _initSwipeToClose();
 
-      // Call existing members
+      // FIX: Only open invite modal when HOST creates room (not when joining via link)
+      // We distinguish by checking if URL had ?room= param before joining
+      const wasInvited = new URLSearchParams(location.search).get('room') !== null;
+      if (!wasInvited) {
+        // Small delay so room UI renders first
+        setTimeout(() => openModal(), 300);
+      } else {
+        // Show invite link as a toast instead
+        toast('✅ Đã vào phòng! Nhấn 🔗 để mời thêm bạn bè', 'success');
+      }
+
       res.members.forEach(m => WebRTC.callPeer(m.socketId));
     });
   }
@@ -134,7 +137,6 @@ const App = (() => {
     systemMsg(`${avatar} ${nick} đã tham gia`);
     renderPeople();
     updatePeerCount();
-    // New user calls us back — nothing to do, they'll call us
   }
 
   function onUserLeft({ socketId }) {
@@ -154,8 +156,8 @@ const App = (() => {
 
   function onMediaState({ socketId, micOn: m, camOn: c, screenOn: s }) {
     if (peers[socketId]) {
-      peers[socketId].micOn   = m;
-      peers[socketId].camOn   = c;
+      peers[socketId].micOn    = m;
+      peers[socketId].camOn    = c;
       peers[socketId].screenOn = s;
       renderPeople();
       updateTileLabel(socketId);
@@ -169,18 +171,15 @@ const App = (() => {
 
     const tileKey = isScreen ? 'screen' : 'cam';
 
-    // Remove old tile for this slot if it exists
     if (peerTiles[peerId][tileKey]) {
-      peerTiles[peerId][tileKey].remove();
+      const old = peerTiles[peerId][tileKey];
+      if (old.dataset.streamId) delete streamTileMap[old.dataset.streamId];
+      old.remove();
       peerTiles[peerId][tileKey] = null;
     }
 
-    // Only create tile if stream has video tracks (audio-only streams don't need a tile)
     const hasVideo = stream.getVideoTracks().length > 0;
-    if (!hasVideo && !isScreen) {
-      // audio only — no tile, but audio will play via existing video element or we add hidden audio
-      return;
-    }
+    if (!hasVideo && !isScreen) return;
 
     const tile = makeTile(stream, p.avatar, p.nick, false, isScreen);
     tile.dataset.peer     = peerId;
@@ -193,7 +192,6 @@ const App = (() => {
   }
 
   function onRemoveStream(peerId, isScreen, streamId) {
-    // Remove by streamId first (most precise)
     if (streamId && streamTileMap[streamId]) {
       streamTileMap[streamId].remove();
       delete streamTileMap[streamId];
@@ -206,7 +204,6 @@ const App = (() => {
       refreshGrid();
       return;
     }
-    // Fallback: remove all tiles for peer
     removePeerTiles(peerId);
   }
 
@@ -231,7 +228,6 @@ const App = (() => {
           audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000, channelCount: 2 },
           video: false
         });
-        // Add audio tracks to camStream or create new stream
         if (!WebRTC.localCamStream) WebRTC.localCamStream = new MediaStream();
         s.getAudioTracks().forEach(t => WebRTC.localCamStream.addTrack(t));
         micOn = true;
@@ -262,7 +258,6 @@ const App = (() => {
         camOn = true;
         setCtrl('ctrlCam', true, '📷', 'Tắt camera');
         toast('📷 Camera đã bật');
-        // Show my cam tile
         showMyCamTile();
       } catch (e) { toast('Không thể bật camera: ' + e.message, 'warn'); return; }
     } else {
@@ -282,9 +277,7 @@ const App = (() => {
   async function toggleScreen() {
     if (!screenOn) {
       try {
-        // preferCurrentTab: true → Chrome ưu tiên share tab hiện tại kèm audio
-        // Khi share tab YouTube/video → tích "Share tab audio" trong dialog Chrome
-        const constraints = {
+        const s = await navigator.mediaDevices.getDisplayMedia({
           video: {
             width: { ideal: 1920, max: 1920 },
             height: { ideal: 1080, max: 1080 },
@@ -297,12 +290,9 @@ const App = (() => {
             sampleRate: 48000,
             channelCount: 2
           },
-          // Gợi ý Chrome ưu tiên chọn tab (có audio) thay vì màn hình
           preferCurrentTab: false,
           selfBrowserSurface: 'exclude',
-        };
-
-        const s = await navigator.mediaDevices.getDisplayMedia(constraints);
+        });
 
         WebRTC.localScreenStream = s;
         screenOn = true;
@@ -315,18 +305,14 @@ const App = (() => {
         if (surfaceType === 'browser') msg += ' tab';
         else if (surfaceType === 'window') msg += ' cửa sổ';
         else msg += ' màn hình';
-        msg += hasAudio ? ' + âm thanh ✅' : ' (không có âm thanh — hãy chọn "Tab" và tích "Share audio")';
-
-        toast(msg, hasAudio ? 'success' : 'warn');
+        msg += hasAudio ? ' + âm thanh ✅' : '';
+        toast(msg, hasAudio ? 'success' : 'info');
 
         showMyScreenTile();
         WebRTC.updateAllPeers();
         emitState();
 
-        // Handle when user clicks "Stop sharing" in browser UI
-        s.getVideoTracks()[0].onended = () => {
-          _stopScreen();
-        };
+        s.getVideoTracks()[0].onended = () => _stopScreen();
 
       } catch (e) {
         if (e.name !== 'NotAllowedError') toast('Lỗi share màn hình: ' + e.message, 'warn');
@@ -337,10 +323,8 @@ const App = (() => {
     }
   }
 
-  // Share tab trình duyệt — cách duy nhất để có audio YouTube/web
   async function toggleTab() {
     if (screenOn) {
-      // Dừng screen share hiện tại trước
       _stopScreen();
       await new Promise(r => setTimeout(r, 300));
     }
@@ -351,7 +335,7 @@ const App = (() => {
             width: { ideal: 1920 },
             height: { ideal: 1080 },
             frameRate: { ideal: 60 },
-            displaySurface: 'browser', // gợi ý chọn tab
+            displaySurface: 'browser',
           },
           audio: {
             echoCancellation: false,
@@ -361,7 +345,7 @@ const App = (() => {
             channelCount: 2,
             suppressLocalAudioPlayback: false,
           },
-          preferCurrentTab: true, // Chrome sẽ chọn tab hiện tại trước
+          preferCurrentTab: true,
         });
 
         WebRTC.localScreenStream = s;
@@ -371,9 +355,7 @@ const App = (() => {
 
         const hasAudio = s.getAudioTracks().length > 0;
         toast(
-          hasAudio
-            ? '🔊 Đang chia sẻ tab + âm thanh ✅'
-            : '⚠️ Không có âm thanh — hãy tích "Share tab audio" trong dialog Chrome',
+          hasAudio ? '🔊 Đang chia sẻ tab + âm thanh ✅' : '⚠️ Không có âm thanh — hãy tích "Share tab audio"',
           hasAudio ? 'success' : 'warn'
         );
 
@@ -392,16 +374,14 @@ const App = (() => {
   }
 
   function _stopScreen() {
-    // Stop all tracks first
     if (WebRTC.localScreenStream) {
       WebRTC.localScreenStream.getTracks().forEach(t => t.stop());
-      WebRTC.localScreenStream = null;  // must be null BEFORE updateAllPeers
+      WebRTC.localScreenStream = null;
     }
     screenOn = false;
     setCtrl('ctrlScreen', false, '🖥️', 'Chia sẻ màn hình / cửa sổ');
     document.getElementById('ctrlTab').classList.remove('on');
 
-    // Remove local screen tile
     if (myTiles.screen) {
       if (myTiles.screen.dataset.streamId) delete streamTileMap[myTiles.screen.dataset.streamId];
       myTiles.screen.remove();
@@ -409,7 +389,6 @@ const App = (() => {
     }
     refreshGrid();
     emitState();
-    // Renegotiate to remove screen tracks from remote peers
     WebRTC.updateAllPeers();
     toast('Đã dừng chia sẻ màn hình');
   }
@@ -485,7 +464,6 @@ const App = (() => {
     const grid = document.getElementById('videoGrid');
     const tiles = grid.querySelectorAll('.vtile');
 
-    // Remove all grid classes
     grid.className = 'video-grid';
 
     if (tiles.length === 0) {
@@ -523,11 +501,6 @@ const App = (() => {
     socket.emit('chat', { text, time });
   }
 
-  function onChatMessage({ socketId, nick, avatar, text, time }) {
-    const isMine = socketId === socket.id;
-    appendChat(isMine, nick, avatar, text, time);
-  }
-
   function appendChat(isMine, nick, avatar, text, time) {
     const area = document.getElementById('messages');
     const div  = document.createElement('div');
@@ -541,10 +514,8 @@ const App = (() => {
       <div class="msg-body">${esc(text)}</div>`;
     area.appendChild(div);
     area.scrollTop = area.scrollHeight;
-    if (!isMine) {
-      if (!sidebarOpen) {
-        document.getElementById('sidebarToggle').classList.add('has-unread');
-      }
+    if (!isMine && !sidebarOpen) {
+      document.getElementById('sidebarToggle').classList.add('has-unread');
     }
   }
 
@@ -561,14 +532,13 @@ const App = (() => {
     const list = document.getElementById('peopleList');
     list.innerHTML = '';
 
-    // Me
     const me = document.createElement('div');
     me.className = 'person';
     me.innerHTML = `
       <div class="person-av">${myAvatar}</div>
       <div class="person-info">
         <div class="person-name">${esc(myNick)} <span class="you-tag">Bạn</span></div>
-        <div class="person-status">${micOn ? '🎙️ Mic' : ''} ${camOn ? '📷 Cam' : ''} ${screenOn ? '🖥️ Screen' : ''}</div>
+        <div class="person-status">${micOn ? '🎙️' : ''} ${camOn ? '📷' : ''} ${screenOn ? '🖥️' : ''}</div>
       </div>`;
     list.appendChild(me);
 
@@ -608,12 +578,13 @@ const App = (() => {
     sidebar.addEventListener('touchend', e => {
       const dy = e.changedTouches[0].clientY - startY;
       const dt = Date.now() - startTime;
-      if (dy > 60 && dt < 400) { // swipe down
+      if (dy > 60 && dt < 400) {
         sidebarOpen = true;
         toggleSidebar();
       }
     }, { passive: true });
   }
+
   function switchTab(tab) {
     document.getElementById('panelChat').classList.toggle('hidden', tab !== 'chat');
     document.getElementById('panelPeople').classList.toggle('hidden', tab !== 'people');
@@ -680,9 +651,6 @@ const App = (() => {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  // Override onChatMessage properly (avoid duplicate binding)
-  // Socket binding is in init(), so we wire it after socket is created
-  // Patch: make onChatMessage accessible
   window.addEventListener('DOMContentLoaded', init);
 
   return { toggleMic, toggleCamera, toggleScreen, toggleTab, toggleSidebar, sendChat, switchTab, openModal, closeModal, copyLink, leave };
