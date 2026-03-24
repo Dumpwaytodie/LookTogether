@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { Server } = require('socket.io');
 const path = require('path');
 const crypto = require('crypto');
@@ -86,12 +87,10 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`\n🚀 NovaCast @ http://localhost:${PORT}\n`);
   if (process.env.RENDER_EXTERNAL_URL) {
-    setInterval(() => { http.get(`${process.env.RENDER_EXTERNAL_URL}/health`).on('error', () => {}); }, 10 * 60 * 1000);
+    setInterval(() => { https.get(`${process.env.RENDER_EXTERNAL_URL}/health`).on('error', () => {}); }, 10 * 60 * 1000);
   }
 });
 
-// ICE config endpoint — trả TURN credentials cho client
-// Cấu hình: set TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL trong env
 app.get('/ice-config', (req, res) => {
   const iceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
