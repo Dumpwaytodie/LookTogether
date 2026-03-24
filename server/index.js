@@ -11,7 +11,7 @@ const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e7 })
 
 app.use(express.static(path.join(__dirname, '../public')));
 
-const rooms = {}; // roomId -> { socketId: { nick, avatar, socketId } }
+const rooms = {};
 
 function genRoomId() { return crypto.randomBytes(4).toString('hex').toUpperCase(); }
 function members(roomId) { return Object.values(rooms[roomId] || {}); }
@@ -53,12 +53,10 @@ io.on('connection', (socket) => {
     io.to(currentRoom).emit('chat', { socketId: socket.id, nick: myInfo.nick, avatar: myInfo.avatar, text, time });
   });
 
-  // WebRTC signaling
   socket.on('offer',         ({ to, offer })     => socket.to(to).emit('offer',         { from: socket.id, offer }));
   socket.on('answer',        ({ to, answer })    => socket.to(to).emit('answer',        { from: socket.id, answer }));
   socket.on('ice-candidate', ({ to, candidate }) => socket.to(to).emit('ice-candidate', { from: socket.id, candidate }));
 
-  // Stream metadata relay: which streamId is a screen share
   socket.on('stream-meta-to', ({ to, streamId, isScreen }) => {
     socket.to(to).emit('stream-meta', { from: socket.id, streamId, isScreen });
   });
@@ -87,7 +85,10 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`\n🚀 NovaCast @ http://localhost:${PORT}\n`);
   if (process.env.RENDER_EXTERNAL_URL) {
-    setInterval(() => { https.get(`${process.env.RENDER_EXTERNAL_URL}/health`).on('error', () => {}); }, 10 * 60 * 1000);
+    setInterval(() => {
+      https.get(`${process.env.RENDER_EXTERNAL_URL}/health`).on('error', () => {});
+    }, 10 * 60 * 1000);
+    console.log('[Keep-alive] ping mỗi 10 phút →', process.env.RENDER_EXTERNAL_URL);
   }
 });
 
